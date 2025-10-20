@@ -1,0 +1,34 @@
+# Enforce consistent line endings (Unix LF)
+* text=auto eol=lf
+
+# Treat all text files as UTF-8
+*.ts text diff
+*.tsx text diff
+*.js text diff
+*.jsx text diff
+*.json text diff
+*.css text diff
+*.scss text diff
+*.html text diff
+*.md text diff
+*.yml text diff
+*.yaml text diff
+
+# Prevent Git from altering binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.pdf binary
+*.zip binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+
+# Ensure lockfiles stay consistent (if used)
+package-lock.json text eol=lf
+
+# Ignore diff noise for built files
+dist/* linguist-generated
