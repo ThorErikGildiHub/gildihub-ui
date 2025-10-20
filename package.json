@@ -1,6 +1,6 @@
 {
   "name": "@thorerikgildihub/ui",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "GildiHub UI components for React + Tailwind, powered by @thorerikgildihub/theme tokens.",
   "type": "module",
   "main": "dist/index.cjs",
