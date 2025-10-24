@@ -1,34 +1,22 @@
-# Enforce consistent line endings (Unix LF)
-* text=auto eol=lf
+# --- Generelle regler ---
+# Normaliser tekstfiler automatisk, men behold binære filer urørt
+* text=auto
 
-# Treat all text files as UTF-8
-*.ts text diff
-*.tsx text diff
-*.js text diff
-*.jsx text diff
-*.json text diff
-*.css text diff
-*.scss text diff
-*.html text diff
-*.md text diff
-*.yml text diff
-*.yaml text diff
+# --- Linjeskiftregler (hindrer CRLF/LF-feil) ---
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.js   text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.sh   text eol=lf
+*.ps1  text eol=crlf   # PowerShell-skript beholder CRLF på Windows
 
-# Prevent Git from altering binary files
-*.png binary
-*.jpg binary
+# --- Binære filer ---
+*.png  binary
+*.jpg  binary
 *.jpeg binary
-*.gif binary
-*.ico binary
-*.svg binary
-*.pdf binary
-*.zip binary
-*.ttf binary
-*.woff binary
-*.woff2 binary
-
-# Ensure lockfiles stay consistent (if used)
-package-lock.json text eol=lf
-
-# Ignore diff noise for built files
-dist/* linguist-generated
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.pdf  binary
