@@ -1,8 +1,5 @@
-# --- Generelle regler ---
-# Normaliser tekstfiler automatisk, men behold binære filer urørt
 * text=auto
 
-# --- Linjeskiftregler (hindrer CRLF/LF-feil) ---
 *.yml  text eol=lf
 *.yaml text eol=lf
 *.js   text eol=lf
@@ -10,9 +7,8 @@
 *.json text eol=lf
 *.md   text eol=lf
 *.sh   text eol=lf
-*.ps1  text eol=crlf   # PowerShell-skript beholder CRLF på Windows
+*.ps1  text eol=crlf
 
-# --- Binære filer ---
 *.png  binary
 *.jpg  binary
 *.jpeg binary
