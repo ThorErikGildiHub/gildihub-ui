@@ -1,0 +1,115 @@
+﻿# ===============================
+# gildihub-ui: Package Build + Mirror (no deploy)
+# ===============================
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  name: Local
+
+variables:
+  - group: GITHUB_MIRROR_gildihub-ui
+
+parameters:
+  - name: nodeVersion
+    type: string
+    default: '18.x'
+  - name: workingDirectory
+    type: string
+    default: '.'
+  - name: mirrorWhitelist
+    type: object
+    default:
+      - src
+      - dist
+      - package.json
+      - README.md
+      - LICENSE
+
+stages:
+  - stage: Build
+    displayName: Build UI library
+    jobs:
+      - job: build_lib
+        steps:
+          - checkout: self
+            clean: true
+          - task: NodeTool@0
+            inputs:
+              versionSpec: ${{ parameters.nodeVersion }}
+            displayName: Use Node ${{ parameters.nodeVersion }}
+          - task: Cache@2
+            displayName: Cache npm
+            inputs:
+              key: 'npm | "$(Agent.OS)" | ${{ parameters.workingDirectory }}/package-lock.json'
+              restoreKeys: |
+                npm | "$(Agent.OS)"
+              path: ${{ parameters.workingDirectory }}/node_modules
+          - pwsh: |
+              Set-StrictMode -Version Latest
+              $ErrorActionPreference = "Stop"
+              Set-Location '${{ parameters.workingDirectory }}'
+              if (Test-Path package.json) {
+                npm ci --no-audit --fund=false
+                $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+                if ($pkg.scripts.build) { npm run build } else { Write-Host "No build script; skipping." }
+              } else {
+                Write-Host "No package.json; skipping npm."
+              }
+            displayName: Install & Build
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+            displayName: Publish artifact
+
+  - stage: MirrorSubset
+    displayName: Mirror subset to GitHub
+    dependsOn: Build
+    jobs:
+      - job: mirror
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - pwsh: |
+              Set-StrictMode -Version Latest
+              $ErrorActionPreference = "Stop"
+              $raw = $env:MIRROR_WHITELIST
+              if (-not $raw -or $raw.Trim().Length -eq 0) {
+                Write-Host "Ingen whitelist oppgitt â€“ hopper over mirror."
+                Write-Host "##vso[task.complete result=SucceededWithIssues;]No files to mirror"
+                exit 0
+              }
+              $include = $raw -split ';' | Where-Object { $_ -ne '' }
+              Remove-Item mirror_out -Recurse -Force -ErrorAction SilentlyContinue
+              New-Item -ItemType Directory mirror_out | Out-Null
+              $copied = 0
+              foreach ($p in $include) {
+                if (Test-Path $p) { Copy-Item $p -Destination mirror_out -Recurse -Force; $copied++ }
+                else { Write-Host "Skip (not found): $p" }
+              }
+              if ($copied -eq 0) {
+                Write-Host "##vso[task.complete result=SucceededWithIssues;]No files to mirror"
+                exit 0
+              }
+              Push-Location mirror_out
+              git init
+              git checkout -b main
+              git config user.name  "azdo-mirror-bot"
+              git config user.email "devops@gildihub.local"
+              git add .
+              git commit -m "Mirror subset (squashed): $(Build.SourceVersionMessage)"
+              $secureUrl = "$(GITHUB_URL)".Replace("https://","https://$(GITHUB_USER):$(GITHUB_PAT)@")
+              if ((git remote) -contains "github") { git remote remove github }
+              git remote add github $secureUrl
+              git push github main --force
+              Pop-Location
+            env:
+              MIRROR_WHITELIST: ${{ join(parameters.mirrorWhitelist, ';') }}
+              GITHUB_USER: $(GITHUB_USER)
+              GITHUB_PAT:  $(GITHUB_PAT)
+              GITHUB_URL:  $(GITHUB_URL)
+            displayName: Mirror subset â†’ GitHub (force-push main)
