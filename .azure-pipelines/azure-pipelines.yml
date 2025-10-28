@@ -1,0 +1,64 @@
+# gildihub-ui — bygger UI-biblioteket på develop/main og publiserer artefakt (ingen deploy)
+
+trigger:
+  branches:
+    include:
+      - develop
+      - main
+
+pr:
+  branches:
+    include:
+      - develop
+      - main
+
+variables:
+  - group: GildiHub-WebApps
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: build
+    displayName: Build
+    jobs:
+      - job: build
+        displayName: Build (Node 20)
+        steps:
+          - task: NodeTool@0
+            displayName: Use Node 20.x
+            inputs:
+              versionSpec: '20.x'
+
+          - task: Cache@2
+            displayName: Cache npm
+            inputs:
+              key: 'npm | "$(Agent.OS)" | package-lock.json'
+              path: '$(Pipeline.Workspace)/.npm'
+              restoreKeys: |
+                npm | "$(Agent.OS)"
+            continueOnError: true
+
+          - script: npm ci
+            displayName: npm ci
+
+          - script: npm run build
+            displayName: npm run build
+
+          # Hvis biblioteket genererer en dist/ mappe, pakk den som artefakt
+          - task: ArchiveFiles@2
+            displayName: Archive dist for artifact
+            inputs:
+              rootFolderOrFile: '$(System.DefaultWorkingDirectory)/dist'
+              includeRootFolder: false
+              archiveType: zip
+              archiveFile: '$(Build.ArtifactStagingDirectory)/ui-dist.zip'
+              replaceExistingArchive: true
+            condition: succeededOrFailed() # kjør selv om dist mangler – pipeline feiler uansett uten build
+
+          - task: PublishBuildArtifacts@1
+            displayName: Publish artifact (ui-dist)
+            inputs:
+              pathToPublish: '$(Build.ArtifactStagingDirectory)'
+              artifactName: ui-dist
+              publishLocation: Container
