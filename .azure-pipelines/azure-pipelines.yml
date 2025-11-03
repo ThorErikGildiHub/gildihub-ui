@@ -1,64 +1,53 @@
-# gildihub-ui — bygger UI-biblioteket på develop/main og publiserer artefakt (ingen deploy)
+# gildihub-ui — dual-mode pool, Node 20, build-only (no deploy), publish artifact
 
 trigger:
-  branches:
-    include:
-      - develop
-      - main
+  branches: { include: [develop, main] }
 
 pr:
-  branches:
-    include:
-      - develop
-      - main
+  branches: { include: [develop, main] }
 
 variables:
-  - group: GildiHub-WebApps
+  - name: USE_HOSTED
+    value: 'false'
+  - name: SELF_HOSTED_POOL
+    value: 'Default'
+  - name: VM_IMAGE
+    value: 'windows-latest'
 
 pool:
-  vmImage: ubuntu-latest
+  ${{ if eq(variables['USE_HOSTED'], 'true') }}:
+    vmImage: ${{ variables.VM_IMAGE }}
+  ${{ if ne(variables['USE_HOSTED'], 'true') }}:
+    name: ${{ variables.SELF_HOSTED_POOL }}
 
 stages:
   - stage: build
     displayName: Build
     jobs:
       - job: build
-        displayName: Build (Node 20)
+        displayName: Install & Build (Node 20)
         steps:
+          - pwsh: 'Write-Host "ASSERT NEW YAML 🍀 $(Build.DefinitionName) @ $(Build.SourceVersion)"'
           - task: NodeTool@0
-            displayName: Use Node 20.x
+            displayName: Use Node.js 20.x
             inputs:
               versionSpec: '20.x'
-
-          - task: Cache@2
-            displayName: Cache npm
-            inputs:
-              key: 'npm | "$(Agent.OS)" | package-lock.json'
-              path: '$(Pipeline.Workspace)/.npm'
-              restoreKeys: |
-                npm | "$(Agent.OS)"
-            continueOnError: true
-
-          - script: npm ci
-            displayName: npm ci
-
-          - script: npm run build
-            displayName: npm run build
-
-          # Hvis biblioteket genererer en dist/ mappe, pakk den som artefakt
+              checkLatest: true
+          - pwsh: |
+              $v = (node -v) -replace '[vV]',''
+              if ([version]$v -lt [version]'20.0.0') { throw "Node < 20 detected ($v)" }
+              npm ci
+              npm run build
+            displayName: npm ci & build
           - task: ArchiveFiles@2
-            displayName: Archive dist for artifact
             inputs:
-              rootFolderOrFile: '$(System.DefaultWorkingDirectory)/dist'
+              rootFolderOrFile: '$(Build.SourcesDirectory)'
               includeRootFolder: false
               archiveType: zip
-              archiveFile: '$(Build.ArtifactStagingDirectory)/ui-dist.zip'
+              archiveFile: '$(Build.ArtifactStagingDirectory)/ui-drop.zip'
               replaceExistingArchive: true
-            condition: succeededOrFailed() # kjør selv om dist mangler – pipeline feiler uansett uten build
-
           - task: PublishBuildArtifacts@1
-            displayName: Publish artifact (ui-dist)
             inputs:
-              pathToPublish: '$(Build.ArtifactStagingDirectory)'
-              artifactName: ui-dist
-              publishLocation: Container
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'ui-drop'
+              publishLocation: 'Container'
