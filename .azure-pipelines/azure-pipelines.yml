@@ -1,93 +1,47 @@
-# gildihub-ui — build-only (lib/package)
-# Default: self-hosted agent pool "Default".
-# Når dere har Hosted-parallelism: kjør med parameter poolName: "Azure Pipelines".
-
-name: $(Date:yyyyMMdd).$(Rev:r)
-
+# Azure Pipelines (dual-mode) — Hosted or Self-hosted (Windows)
 trigger:
-  branches:
-    include:
-      - main
-      - develop
+  - main
 
 pr:
-  branches:
-    include:
-      - main
-      - develop
-
-parameters:
-  - name: poolName
-    type: string
-    default: 'Default'        # bruk 'Azure Pipelines' når hosted er aktivert
+  - main
 
 variables:
   NODE_VERSION: '20.x'
-  BUILD_DIR: 'dist'           # endre hvis ditt build-output heter noe annet
+  USE_SELF_HOSTED: 'false'
 
-pool:
-  name: ${{ parameters.poolName }}
-  demands:
-    - Agent.OS -equals Windows_NT
+jobs:
+- job: hosted
+  displayName: Build (Hosted)
+  condition: ne(variables['USE_SELF_HOSTED'], 'true')
+  pool:
+    vmImage: 'windows-latest'
+  steps:
+  - task: NodeTool@0
+    displayName: "Use Node $(NODE_VERSION)"
+    inputs:
+      versionSpec: '$(NODE_VERSION)'
+  - powershell: |
+      if (Test-Path package.json) {
+        npm ci
+        if ((Get-Content package.json -Raw | ConvertFrom-Json).scripts.build) { npm run build }
+        else { Write-Host "No build script" }
+      } else { Write-Host "No package.json" }
+    displayName: "Install & Build"
 
-stages:
-- stage: build
-  displayName: Build UI Library
-  jobs:
-  - job: build_job
-    displayName: Install • Build • Test • Package
-    steps:
-      - checkout: self
-        fetchDepth: 0
-
-      # Node 20
-      - task: NodeTool@0
-        displayName: 'Use Node $(NODE_VERSION)'
-        inputs:
-          versionSpec: '$(NODE_VERSION)'
-
-      # NPM cache (basert på package-lock.json hvis den finnes)
-      - task: Cache@2
-        displayName: 'Cache npm'
-        inputs:
-          key: 'npm | "$(Agent.OS)" | package-lock.json'
-          restoreKeys: |
-            npm | "$(Agent.OS)"
-          path: '$(Pipeline.Workspace)/.npm'
-        condition: exists('package-lock.json')
-
-      - script: |
-          npm ci || npm install
-        displayName: 'Install dependencies'
-        env:
-          npm_config_cache: $(Pipeline.Workspace)/.npm
-
-      # Kjør build hvis script finnes, ellers hopp
-      - powershell: |
-          $pkg = Get-Content package.json | ConvertFrom-Json
-          if ($pkg.scripts.build) { npm run build } else { Write-Host 'No build script in package.json — skipping' }
-        displayName: 'Build'
-
-      # Kjør test hvis script finnes (ok om ingen tester)
-      - powershell: |
-          $pkg = Get-Content package.json | ConvertFrom-Json
-          if ($pkg.scripts.test) { npm test } else { Write-Host 'No test script — skipping' }
-        displayName: 'Test (optional)'
-
-      # Publiser artefakt (hopp hvis mappe mangler)
-      - powershell: |
-          if (Test-Path '$(BUILD_DIR)') {
-            Write-Host "Publishing artifact from $(BUILD_DIR)"
-          } else {
-            Write-Host "No $(BUILD_DIR) folder — creating empty placeholder"
-            New-Item -ItemType Directory -Force -Path '$(BUILD_DIR)' | Out-Null
-            Out-File -FilePath '$(BUILD_DIR)/README.txt' -InputObject 'No build output produced.'
-          }
-        displayName: 'Prepare artifact'
-
-      - task: PublishBuildArtifacts@1
-        displayName: 'Publish Artifact: ui-dist'
-        inputs:
-          PathtoPublish: '$(BUILD_DIR)'
-          ArtifactName: 'ui-dist'
-          publishLocation: 'Container'
+- job: selfhosted
+  displayName: Build (Self-hosted)
+  condition: eq(variables['USE_SELF_HOSTED'], 'true')
+  pool:
+    name: Default
+  steps:
+  - task: NodeTool@0
+    displayName: "Use Node $(NODE_VERSION)"
+    inputs:
+      versionSpec: '$(NODE_VERSION)'
+  - powershell: |
+      if (Test-Path package.json) {
+        npm ci
+        if ((Get-Content package.json -Raw | ConvertFrom-Json).scripts.build) { npm run build }
+        else { Write-Host "No build script" }
+      } else { Write-Host "No package.json" }
+    displayName: "Install & Build"
