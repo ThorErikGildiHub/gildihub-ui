@@ -1,0 +1,9 @@
+﻿trigger: none
+pool:
+  name: Local
+steps:
+- pwsh: |
+    echo "Hello from $(Agent.Name) on $(Agent.OS)"
+    Start-Sleep -Seconds 3
+    echo "OK ðŸŽ‰"
+  displayName: 'Health check'

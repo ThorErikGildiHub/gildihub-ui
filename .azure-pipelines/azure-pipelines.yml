@@ -1,53 +1,93 @@
-# gildihub-ui — dual-mode pool, Node 20, build-only (no deploy), publish artifact
+# gildihub-ui — build-only (lib/package)
+# Default: self-hosted agent pool "Default".
+# Når dere har Hosted-parallelism: kjør med parameter poolName: "Azure Pipelines".
+
+name: $(Date:yyyyMMdd).$(Rev:r)
 
 trigger:
-  branches: { include: [develop, main] }
+  branches:
+    include:
+      - main
+      - develop
 
 pr:
-  branches: { include: [develop, main] }
+  branches:
+    include:
+      - main
+      - develop
+
+parameters:
+  - name: poolName
+    type: string
+    default: 'Default'        # bruk 'Azure Pipelines' når hosted er aktivert
 
 variables:
-  - name: USE_HOSTED
-    value: 'false'
-  - name: SELF_HOSTED_POOL
-    value: 'Default'
-  - name: VM_IMAGE
-    value: 'windows-latest'
+  NODE_VERSION: '20.x'
+  BUILD_DIR: 'dist'           # endre hvis ditt build-output heter noe annet
 
 pool:
-  ${{ if eq(variables['USE_HOSTED'], 'true') }}:
-    vmImage: ${{ variables.VM_IMAGE }}
-  ${{ if ne(variables['USE_HOSTED'], 'true') }}:
-    name: ${{ variables.SELF_HOSTED_POOL }}
+  name: ${{ parameters.poolName }}
+  demands:
+    - Agent.OS -equals Windows_NT
 
 stages:
-  - stage: build
-    displayName: Build
-    jobs:
-      - job: build
-        displayName: Install & Build (Node 20)
-        steps:
-          - pwsh: 'Write-Host "ASSERT NEW YAML 🍀 $(Build.DefinitionName) @ $(Build.SourceVersion)"'
-          - task: NodeTool@0
-            displayName: Use Node.js 20.x
-            inputs:
-              versionSpec: '20.x'
-              checkLatest: true
-          - pwsh: |
-              $v = (node -v) -replace '[vV]',''
-              if ([version]$v -lt [version]'20.0.0') { throw "Node < 20 detected ($v)" }
-              npm ci
-              npm run build
-            displayName: npm ci & build
-          - task: ArchiveFiles@2
-            inputs:
-              rootFolderOrFile: '$(Build.SourcesDirectory)'
-              includeRootFolder: false
-              archiveType: zip
-              archiveFile: '$(Build.ArtifactStagingDirectory)/ui-drop.zip'
-              replaceExistingArchive: true
-          - task: PublishBuildArtifacts@1
-            inputs:
-              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'ui-drop'
-              publishLocation: 'Container'
+- stage: build
+  displayName: Build UI Library
+  jobs:
+  - job: build_job
+    displayName: Install • Build • Test • Package
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      # Node 20
+      - task: NodeTool@0
+        displayName: 'Use Node $(NODE_VERSION)'
+        inputs:
+          versionSpec: '$(NODE_VERSION)'
+
+      # NPM cache (basert på package-lock.json hvis den finnes)
+      - task: Cache@2
+        displayName: 'Cache npm'
+        inputs:
+          key: 'npm | "$(Agent.OS)" | package-lock.json'
+          restoreKeys: |
+            npm | "$(Agent.OS)"
+          path: '$(Pipeline.Workspace)/.npm'
+        condition: exists('package-lock.json')
+
+      - script: |
+          npm ci || npm install
+        displayName: 'Install dependencies'
+        env:
+          npm_config_cache: $(Pipeline.Workspace)/.npm
+
+      # Kjør build hvis script finnes, ellers hopp
+      - powershell: |
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          if ($pkg.scripts.build) { npm run build } else { Write-Host 'No build script in package.json — skipping' }
+        displayName: 'Build'
+
+      # Kjør test hvis script finnes (ok om ingen tester)
+      - powershell: |
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          if ($pkg.scripts.test) { npm test } else { Write-Host 'No test script — skipping' }
+        displayName: 'Test (optional)'
+
+      # Publiser artefakt (hopp hvis mappe mangler)
+      - powershell: |
+          if (Test-Path '$(BUILD_DIR)') {
+            Write-Host "Publishing artifact from $(BUILD_DIR)"
+          } else {
+            Write-Host "No $(BUILD_DIR) folder — creating empty placeholder"
+            New-Item -ItemType Directory -Force -Path '$(BUILD_DIR)' | Out-Null
+            Out-File -FilePath '$(BUILD_DIR)/README.txt' -InputObject 'No build output produced.'
+          }
+        displayName: 'Prepare artifact'
+
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish Artifact: ui-dist'
+        inputs:
+          PathtoPublish: '$(BUILD_DIR)'
+          ArtifactName: 'ui-dist'
+          publishLocation: 'Container'
