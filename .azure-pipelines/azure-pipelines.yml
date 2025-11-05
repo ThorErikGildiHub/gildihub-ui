@@ -1,82 +1,35 @@
-# GILDIHUB-UI — Azure Pipelines (dual-mode, default self-hosted) — Node 20
-# Branch: main
+# Azure Pipelines — Self-hosted by default (Windows)
 trigger:
   - main
 
 pr:
   - main
 
-# Standardverdier (kan overrides i "Run pipeline" → Variables)
 variables:
   NODE_VERSION: '20.x'
-  USE_SELF_HOSTED: 'true'   # <— default til self-hosted agent nå
+  USE_SELF_HOSTED: 'true'   # <- default self-hosted
 
-# To alternative jobber; den som matcher condition kjøres
 jobs:
-# Hosted (deaktivert når USE_SELF_HOSTED == 'true')
-- job: hosted
-  displayName: "Build (Hosted Agent)"
-  condition: ne(variables['USE_SELF_HOSTED'], 'true')
-  pool:
-    vmImage: 'windows-latest'
-  steps:
-  - checkout: self
-    fetchDepth: 0
-  - task: NodeTool@0
-    displayName: "Use Node $(NODE_VERSION)"
-    inputs:
-      versionSpec: '$(NODE_VERSION)'
-
-  - powershell: |
-      Write-Host "== Install & Build (Hosted) =="
-      if (Test-Path package.json) {
-        npm ci
-        try {
-          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
-        } catch {
-          Write-Host "Could not parse package.json — skipping build."
-          exit 0
-        }
-        if ($pkg.scripts -and $pkg.scripts.PSObject.Properties.Name -contains 'build') {
-          npm run build
-        } else {
-          Write-Host "No build script defined — skipping build."
-        }
-      } else {
-        Write-Host "No package.json at repo root — nothing to build."
-      }
-    displayName: "Install & Build"
-
-# Self-hosted (default nå)
 - job: selfhosted
-  displayName: "Build (Self-hosted Agent)"
+  displayName: Build (Self-hosted)
   condition: eq(variables['USE_SELF_HOSTED'], 'true')
   pool:
-    name: Default            # din lokale agent-pool
+    name: Default
   steps:
-  - checkout: self
-    fetchDepth: 0
   - task: NodeTool@0
     displayName: "Use Node $(NODE_VERSION)"
     inputs:
       versionSpec: '$(NODE_VERSION)'
-
   - powershell: |
-      Write-Host "== Install & Build (Self-hosted) =="
       if (Test-Path package.json) {
         npm ci
-        try {
-          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
-        } catch {
-          Write-Host "Could not parse package.json — skipping build."
-          exit 0
-        }
-        if ($pkg.scripts -and $pkg.scripts.PSObject.Properties.Name -contains 'build') {
+        try { $pkg = Get-Content package.json -Raw | ConvertFrom-Json } catch { $pkg = $null }
+        if ($pkg -and $pkg.scripts -and $pkg.scripts.PSObject.Properties.Name -contains 'build') {
           npm run build
         } else {
-          Write-Host "No build script defined — skipping build."
+          Write-Host "No build script — skipping build."
         }
       } else {
-        Write-Host "No package.json at repo root — nothing to build."
+        Write-Host "No package.json — nothing to build."
       }
     displayName: "Install & Build"
