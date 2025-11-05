@@ -1,4 +1,4 @@
-# Azure Pipelines — Self-hosted default (Windows), Node 20
+# Azure Pipelines — Self-hosted (Local), Node 20, GitHub Packages auth
 trigger:
   - main
 
@@ -7,33 +7,154 @@ pr:
 
 variables:
   NODE_VERSION: '20.x'
-  USE_SELF_HOSTED: 'true'   # default = self-hosted agent
+  # Endre hvis package.json ligger i undermappe (f.eks. 'packages/ui')
+  APP_SUBDIR: '.'
 
 jobs:
-- job: selfhosted
+- job: build
   displayName: Build (Self-hosted)
-  condition: eq(variables['USE_SELF_HOSTED'], 'true')
   pool:
-  name: Local   # <- bytt hvis agenten din ligger i annen pool (f.eks. SelfHosted)
+    name: Local
+
   steps:
   - checkout: self
 
+  # 1) Bruk Node 20
   - task: NodeTool@0
     displayName: "Use Node $(NODE_VERSION)"
     inputs:
       versionSpec: '$(NODE_VERSION)'
 
+  # 2) Fallback om NodeTool feiler
   - powershell: |
-      Write-Host "Agent: $(Agent.Name)  Pool: $(Agent.MachineName)  OS: $(Agent.OS)"
-      if (Test-Path package.json) {
-        npm ci
-        try { $pkg = Get-Content package.json -Raw | ConvertFrom-Json } catch { $pkg = $null }
-        if ($pkg -and $pkg.scripts -and $pkg.scripts.PSObject.Properties.Name -contains 'build') {
-          npm run build
-        } else {
-          Write-Host "No build script — skipping build."
+      $ErrorActionPreference = 'Stop'
+      $node = Get-Command node -ErrorAction SilentlyContinue
+      if (-not $node) {
+        Write-Host "Node not found after NodeTool. Installing LTS via Chocolatey..."
+        try { choco -v | Out-Null } catch {
+          Write-Host "Chocolatey not found. Bootstrapping..."
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+          Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
         }
-      } else {
-        Write-Host "No package.json — nothing to build."
+        choco install nodejs-lts -y --no-progress
       }
-    displayName: "Install & Build"
+      Write-Host "Node:"; node -v
+      Write-Host "npm :" ; npm -v
+    displayName: "Ensure Node present (fallback if needed)"
+
+  # 3) Arbeidskatalog
+  - powershell: |
+      $ErrorActionPreference = 'Stop'
+      $target = "$(Build.SourcesDirectory)\$(APP_SUBDIR)".TrimEnd('\','/')
+      Write-Host "Switching working dir to: $target"
+      if (-not (Test-Path $target)) { throw "APP_SUBDIR '$env:APP_SUBDIR' does not exist at $target" }
+      Get-ChildItem -Path $target -Force | Select-Object Mode,Length,LastWriteTime,Name
+    displayName: "Prepare working directory"
+
+  # 4) GitHub Packages-auth med GPR_TOKEN
+  - powershell: |
+      $ErrorActionPreference = 'Stop'
+      if ([string]::IsNullOrWhiteSpace("${env:GPR_TOKEN}")) {
+        throw "Secret variable GPR_TOKEN is missing. Add it in pipeline variables (GitHub PAT med 'read:packages' + 'repo', SSO enabled)."
+      }
+      $workDir = Join-Path "$(Build.SourcesDirectory)" "$(APP_SUBDIR)"
+      $npmrcPath = Join-Path $workDir ".npmrc"
+      Set-Content -Path $npmrcPath -Value "always-auth=true" -Encoding ascii
+      Add-Content -Path $npmrcPath -Value "@thorerikgildihub:registry=https://npm.pkg.github.com"
+      Add-Content -Path $npmrcPath -Value "@ThorErikGildiHub:registry=https://npm.pkg.github.com"
+      Add-Content -Path $npmrcPath -Value ("//npm.pkg.github.com/:_authToken=" + $env:GPR_TOKEN)
+      Write-Host ".npmrc written to $npmrcPath"
+    displayName: "Configure npm auth for GitHub Packages"
+    env:
+      GPR_TOKEN: $(GPR_TOKEN)
+      NODE_AUTH_TOKEN: $(GPR_TOKEN)
+
+  # 5) Oppdag lockfile
+  - powershell: |
+      $ErrorActionPreference = 'Stop'
+      $lockPath = Join-Path "$(Build.SourcesDirectory)" "$(APP_SUBDIR)\package-lock.json"
+      $hasLock = Test-Path $lockPath
+      Write-Host "Lockfile exists: $hasLock at $lockPath"
+      Write-Host "##vso[task.setvariable variable=HAS_LOCK]$hasLock"
+    displayName: "Detect lockfile"
+
+  # 6) Sørg for cache-mappe
+  - powershell: |
+      $dir = Join-Path $env:AGENT_TEMPDIRECTORY 'npm-cache'
+      New-Item -ItemType Directory -Force -Path $dir | Out-Null
+      Write-Host "Ensured cache dir: $dir"
+    displayName: "Ensure npm cache directory exists"
+
+  # 7) Cache npm
+  - task: Cache@2
+    displayName: "Cache npm (Agent.TempDirectory) based on lockfile"
+    condition: and(succeeded(), eq(variables['HAS_LOCK'], 'True'))
+    inputs:
+      key: 'npm | "$(Agent.OS)" | $(APP_SUBDIR)/package-lock.json'
+      restoreKeys: |
+        npm | "$(Agent.OS)"
+      path: '$(Agent.TempDirectory)/npm-cache'
+    continueOnError: true
+
+  # 8) Installer og bygg
+  - powershell: |
+      $ErrorActionPreference = 'Stop'
+      $ProgressPreference = 'SilentlyContinue'
+      $workDir = Join-Path "$(Build.SourcesDirectory)" "$(APP_SUBDIR)"
+      Push-Location $workDir
+      try {
+        Write-Host "Agent: $(Agent.Name) | Machine: $(Agent.MachineName) | OS: $(Agent.OS)"
+        Write-Host "WorkDir: $workDir"
+        if (-not (Test-Path "$workDir/package.json")) {
+          Write-Host "No package.json in $workDir — nothing to build."
+          exit 0
+        }
+
+        node -v
+        npm -v
+
+        $pkgJson = Get-Content package.json -Raw | ConvertFrom-Json
+        Write-Host "Available npm scripts:"
+        ($pkgJson.scripts | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name) 2>$null
+
+        if (Test-Path "$env:AGENT_TEMPDIRECTORY\npm-cache") {
+          npm config set cache "$env:AGENT_TEMPDIRECTORY\npm-cache" --location=user
+        }
+
+        Write-Host "Running npm ci (fallback to npm install)…"
+        npm ci --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "npm ci failed → trying npm install…"
+          $global:LASTEXITCODE = 0
+          npm install --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
+        }
+
+        if ($pkgJson.scripts.PSObject.Properties.Name -contains 'build') {
+          Write-Host "Running npm run build…"
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "npm run build failed." }
+        } else {
+          Write-Host "No 'build' script — skipping build."
+        }
+      } catch {
+        Write-Warning $_
+        Write-Host "Searching for npm error logs…"
+        $logRoots = @("$env:APPDATA\npm-cache\_logs", "$env:LOCALAPPDATA\npm-cache\_logs", $workDir)
+        foreach ($root in $logRoots) {
+          if (Test-Path $root) {
+            Get-ChildItem -Path $root -Recurse -Filter *.log -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 2 |
+              ForEach-Object {
+                Write-Host "---- NPM LOG: $($_.FullName) ----"
+                Get-Content $_.FullName -Tail 200
+              }
+          }
+        }
+        exit 1
+      } finally {
+        Pop-Location
+      }
+    displayName: "Diagnose + Install & Build"
