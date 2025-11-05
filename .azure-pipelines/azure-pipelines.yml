@@ -1,4 +1,4 @@
-# Azure Pipelines — Self-hosted by default (Windows)
+# Azure Pipelines — Self-hosted default (Windows), Node 20
 trigger:
   - main
 
@@ -7,20 +7,24 @@ pr:
 
 variables:
   NODE_VERSION: '20.x'
-  USE_SELF_HOSTED: 'true'   # <- default self-hosted
+  USE_SELF_HOSTED: 'true'   # default = self-hosted agent
 
 jobs:
 - job: selfhosted
   displayName: Build (Self-hosted)
   condition: eq(variables['USE_SELF_HOSTED'], 'true')
   pool:
-    name: Default
+    name: Default   # <- bytt hvis agenten din ligger i annen pool (f.eks. SelfHosted)
   steps:
+  - checkout: self
+
   - task: NodeTool@0
     displayName: "Use Node $(NODE_VERSION)"
     inputs:
       versionSpec: '$(NODE_VERSION)'
+
   - powershell: |
+      Write-Host "Agent: $(Agent.Name)  Pool: $(Agent.MachineName)  OS: $(Agent.OS)"
       if (Test-Path package.json) {
         npm ci
         try { $pkg = Get-Content package.json -Raw | ConvertFrom-Json } catch { $pkg = $null }
