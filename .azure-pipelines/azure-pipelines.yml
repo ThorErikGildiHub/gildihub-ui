@@ -14,7 +14,7 @@ jobs:
   displayName: Build (Self-hosted)
   condition: eq(variables['USE_SELF_HOSTED'], 'true')
   pool:
-    name: Default   # <- bytt hvis agenten din ligger i annen pool (f.eks. SelfHosted)
+  name: Local   # <- bytt hvis agenten din ligger i annen pool (f.eks. SelfHosted)
   steps:
   - checkout: self
 
